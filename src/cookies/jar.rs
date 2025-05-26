@@ -1,13 +1,13 @@
 use super::Cookie;
 use http::Uri;
 use std::{
-    collections::HashSet,
     error::Error,
     fmt,
     hash::{Hash, Hasher},
     net::{Ipv4Addr, Ipv6Addr},
     sync::{Arc, RwLock},
 };
+use indexmap::IndexSet;
 
 /// Returned when a [`Cookie`] fails to be added to the [`CookieJar`].
 #[derive(Clone, Debug)]
@@ -72,7 +72,7 @@ impl Error for CookieRejectedError {}
 /// unrelated websites can have cookies with the same name without conflict.
 #[derive(Clone, Debug, Default)]
 pub struct CookieJar {
-    cookies: Arc<RwLock<HashSet<CookieWithContext>>>,
+    cookies: Arc<RwLock<IndexSet<CookieWithContext>>>,
 }
 
 impl CookieJar {
