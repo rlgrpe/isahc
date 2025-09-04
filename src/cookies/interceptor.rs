@@ -40,7 +40,7 @@ impl Interceptor for CookieInterceptor {
                 .skip_cookies_interceptor
                 .unwrap_or(false)
             {
-                debug!("Skipping cookie interceptor");
+                tracing::debug!("Skipping cookie interceptor");
                 return Ok(ctx.send(request).await?);
             }
 
