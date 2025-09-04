@@ -26,7 +26,7 @@ pub(crate) mod dial;
 pub(crate) mod dns;
 pub(crate) mod proxy;
 pub(crate) mod redirect;
-pub(crate) mod request;
+pub mod request;
 pub(crate) mod ssl;
 
 pub use dial::{Dialer, DialerParseError};
