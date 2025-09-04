@@ -97,6 +97,12 @@ define_request_config! {
     skip_cookies_interceptor: Option<bool>,
 }
 
+impl RequestConfig {
+    pub fn skip_cookies_interceptor(&mut self, value: bool) {
+        self.skip_cookies_interceptor = Some(value);
+    }
+}
+
 impl SetOpt for RequestConfig {
     fn set_opt<H>(&self, easy: &mut Easy2<H>) -> Result<(), curl::Error> {
         if let Some(timeout) = self.timeout {
