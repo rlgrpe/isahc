@@ -2,6 +2,7 @@
 
 use super::{proxy::Proxy, *};
 use curl::easy::Easy2;
+use crate::headers::HeadersOrder;
 
 /// Base trait for any object that can be configured for requests, such as an
 /// HTTP request builder or an HTTP client.
@@ -92,6 +93,7 @@ define_request_config! {
     redirect_policy: Option<RedirectPolicy>,
     auto_referer: Option<bool>,
     title_case_headers: Option<bool>,
+    headers_ordering: Option<HeadersOrder>,
 }
 
 impl SetOpt for RequestConfig {

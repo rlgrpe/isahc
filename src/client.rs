@@ -1147,7 +1147,18 @@ impl HttpClient {
             .title_case_headers
             .unwrap_or(false);
 
-        for (name, value) in request.headers().iter() {
+        let headers_order = request
+            .extensions()
+            .get::<RequestConfig>()
+            .unwrap()
+            .headers_ordering
+            .clone()
+            .unwrap_or_default();
+
+        let mut request_headers = request.headers_mut();
+        headers_order.sort(&mut request_headers);
+
+        for (name, value) in request_headers {
             headers.append(&header_to_curl_string(name, value, title_case))?;
         }
 

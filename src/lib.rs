@@ -305,6 +305,7 @@ pub mod prelude {
         ReadResponseExt,
         RequestExt,
         ResponseExt,
+        headers::HeadersOrder
     };
 }
 
