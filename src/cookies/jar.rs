@@ -109,7 +109,7 @@ impl CookieJar {
             .collect::<Vec<_>>();
 
         // Cookies should be returned in lexical order.
-        cookies.sort_by(|a, b| a.name().cmp(b.name()));
+        // cookies.sort_by(/**/|a, b| a.name().cmp(b.name()));
 
         cookies
     }
