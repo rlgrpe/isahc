@@ -10,6 +10,7 @@ use crate::{
 };
 use http::Request;
 use std::convert::TryInto;
+use crate::config::request::RequestConfig;
 
 #[derive(Debug)]
 pub(crate) struct CookieInterceptor {
@@ -32,6 +33,17 @@ impl Interceptor for CookieInterceptor {
         ctx: Context<'a>,
     ) -> InterceptorFuture<'a, Self::Err> {
         Box::pin(async move {
+           if request
+                .extensions()
+                .get::<RequestConfig>()
+                .unwrap()
+                .skip_cookies_interceptor
+                .unwrap_or(false)
+            {
+                debug!("Skipping cookie interceptor");
+                return Ok(ctx.send(request).await?);
+            }
+
             // Determine the cookie jar to use for this request. If one is
             // attached to this specific request, use it, otherwise use the
             // default one.

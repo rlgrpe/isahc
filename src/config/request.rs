@@ -94,6 +94,7 @@ define_request_config! {
     auto_referer: Option<bool>,
     title_case_headers: Option<bool>,
     headers_ordering: Option<HeadersOrder>,
+    skip_cookies_interceptor: Option<bool>,
 }
 
 impl SetOpt for RequestConfig {
