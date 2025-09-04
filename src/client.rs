@@ -36,6 +36,7 @@ use std::{
     time::Duration,
 };
 use tracing_futures::Instrument;
+use crate::headers::HeadersOrder;
 
 static USER_AGENT: Lazy<String> = Lazy::new(|| {
     format!(
@@ -429,6 +430,12 @@ impl HttpClientBuilder {
             self = self.default_header(key, value);
         }
 
+        self
+    }
+    
+    /// Set default headers ordering
+    pub fn headers_order(mut self, headers_order: HeadersOrder) -> Self {
+        self.request_config.headers_ordering = Some(headers_order);
         self
     }
 
