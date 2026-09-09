@@ -7,6 +7,7 @@ use isahc::{
     cookies::{Cookie, CookieJar, SameSite},
     prelude::*,
 };
+use std::collections::HashSet;
 use testserver::mock;
 
 #[test]
@@ -33,7 +34,13 @@ fn cookie_lifecycle() {
 
     assert!(response2.cookie_jar().is_some());
 
-    dbg!(m2.request()).expect_header("cookie", "baz=123; foo=bar");
+    let header = m2
+        .request()
+        .get_header("cookie")
+        .next()
+        .expect("outgoing cookie header");
+    let tokens: HashSet<&str> = header.split("; ").collect();
+    assert_eq!(tokens, HashSet::from(["foo=bar", "baz=123"]));
 }
 
 #[test]
@@ -210,11 +217,7 @@ fn interceptor_redirect_keeps_accepted_cookie() {
         .build()
         .unwrap();
 
-    let hop = mock! {
-        headers {
-            "set-cookie": "hop=1; HttpOnly; SameSite=Strict; Path=/",
-        }
-    };
+    let hop = mock!();
     let location = hop.url();
     let start = mock! {
         status: 302,

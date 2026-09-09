@@ -162,8 +162,8 @@ impl CookieJar {
     /// cookies are omitted using one captured time and native expiry semantics.
     /// Snapshot `Debug` redacts cookie values.
     pub fn snapshot(&self) -> Vec<EffectiveCookieSnapshot> {
-        let now = SystemTime::now();
         let jar = self.cookies.read().unwrap();
+        let now = SystemTime::now();
         jar.iter()
             .filter(|cookie| !cookie.cookie.is_expired_at(now))
             .map(|cookie| EffectiveCookieSnapshot {

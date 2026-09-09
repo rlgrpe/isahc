@@ -1,7 +1,6 @@
 use std::{
     error::Error,
-    fmt,
-    str,
+    fmt, str,
     time::{Duration, SystemTime},
 };
 
@@ -358,8 +357,15 @@ impl Cookie {
 
         // Unknown attributes are ignored (RFC 6265 section 4.1.2).
         for attribute in attributes {
+            let attribute = trim_ascii(attribute);
             if let Some((name, value)) = split_at_first(attribute, &b'=') {
-                if name.eq_ignore_ascii_case(b"Expires") {
+                let name = trim_ascii(name);
+                let value = trim_ascii(value);
+                if name.eq_ignore_ascii_case(b"HttpOnly") {
+                    cookie_http_only = true;
+                } else if name.eq_ignore_ascii_case(b"Secure") {
+                    cookie_secure = true;
+                } else if name.eq_ignore_ascii_case(b"Expires") {
                     if cookie_expiration.is_none() {
                         if let Ok(value) = str::from_utf8(value) {
                             if let Ok(time) = httpdate::parse_http_date(value) {
@@ -492,8 +498,16 @@ fn trim_left_ascii(mut ascii: &[u8]) -> &[u8] {
     while ascii.first() == Some(&b' ') {
         ascii = &ascii[1..];
     }
-
     ascii
+}
+
+fn trim_ascii(ascii: &[u8]) -> &[u8] {
+    let ascii = trim_left_ascii(ascii);
+    let mut end = ascii.len();
+    while end > 0 && ascii[end - 1] == b' ' {
+        end -= 1;
+    }
+    &ascii[..end]
 }
 
 fn split_at_first<'a, T: PartialEq>(slice: &'a [T], separator: &T) -> Option<(&'a [T], &'a [T])> {
@@ -624,8 +638,15 @@ mod tests {
         let omitted = Cookie::parse("foo=bar").unwrap();
         assert_eq!(omitted.same_site(), None);
         assert_ne!(omitted.same_site(), Some(SameSite::None));
-    }
 
+        let assigned = Cookie::parse("foo=bar; HttpOnly=; SameSite = Strict").unwrap();
+        assert!(assigned.http_only());
+        assert_eq!(assigned.same_site(), Some(SameSite::Strict));
+
+        let spaced = Cookie::parse("foo=bar; HttpOnly ; SameSite = Lax").unwrap();
+        assert!(spaced.http_only());
+        assert_eq!(spaced.same_site(), Some(SameSite::Lax));
+    }
     #[test]
     fn builder_sets_httponly_and_samesite() {
         let cookie = Cookie::builder("foo", "bar")
