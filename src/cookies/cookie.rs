@@ -497,25 +497,18 @@ fn trim_left_ascii(mut ascii: &[u8]) -> &[u8] {
     ascii
 }
 
-fn trim_ascii(ascii: &[u8]) -> &[u8] {
-    let ascii = trim_left_ascii(ascii);
-    let mut end = ascii.len();
-    while end > 0 && ascii[end - 1] == b' ' {
-        end -= 1;
-    }
-    &ascii[..end]
+fn is_ows(byte: u8) -> bool {
+    byte == b' ' || byte == b'\t'
 }
 
-fn trim_dispatch(ascii: &[u8]) -> &[u8] {
-    let mut ascii = trim_ascii(ascii);
-    while ascii.first() == Some(&b'\t') {
+fn trim_dispatch(mut ascii: &[u8]) -> &[u8] {
+    while !ascii.is_empty() && is_ows(ascii[0]) {
         ascii = &ascii[1..];
     }
-    let mut end = ascii.len();
-    while end > 0 && ascii[end - 1] == b'\t' {
-        end -= 1;
+    while !ascii.is_empty() && is_ows(ascii[ascii.len() - 1]) {
+        ascii = &ascii[..ascii.len() - 1];
     }
-    trim_ascii(&ascii[..end])
+    ascii
 }
 
 fn split_at_first<'a, T: PartialEq>(slice: &'a [T], separator: &T) -> Option<(&'a [T], &'a [T])> {
@@ -654,6 +647,10 @@ mod tests {
         let spaced = Cookie::parse("foo=bar; HttpOnly ; SameSite = Lax").unwrap();
         assert!(spaced.http_only());
         assert_eq!(spaced.same_site(), Some(SameSite::Lax));
+
+        let alternating = Cookie::parse("foo=bar; HttpOnly\t \t; SameSite\t \t=Strict").unwrap();
+        assert!(alternating.http_only());
+        assert_eq!(alternating.same_site(), Some(SameSite::Strict));
     }
     #[test]
     fn builder_sets_httponly_and_samesite() {

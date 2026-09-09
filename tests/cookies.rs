@@ -242,3 +242,27 @@ fn interceptor_redirect_keeps_accepted_cookie() {
     assert!(cookie.http_only);
     assert_eq!(cookie.same_site, Some(SameSite::Strict));
 }
+
+#[test]
+fn interceptor_accepts_httponly_samesite_with_alternating_whitespace() {
+    let jar = CookieJar::new();
+    let client = HttpClient::builder()
+        .cookie_jar(jar.clone())
+        .build()
+        .unwrap();
+
+    let response = mock! {
+        headers {
+            "set-cookie": "alt=1; HttpOnly\t \t; SameSite\t \t=Strict; Path=/",
+        }
+    };
+    client.get(response.url()).unwrap();
+    let cookie = jar
+        .snapshot()
+        .into_iter()
+        .find(|cookie| cookie.name == "alt")
+        .unwrap();
+    assert_eq!(cookie.value, "1");
+    assert!(cookie.http_only);
+    assert_eq!(cookie.same_site, Some(SameSite::Strict));
+}
