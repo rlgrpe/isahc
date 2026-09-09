@@ -2,10 +2,10 @@
 
 use http::Uri;
 use isahc::{
+    HttpClient,
     config::RedirectPolicy,
     cookies::{Cookie, CookieJar, SameSite},
     prelude::*,
-    HttpClient, Request,
 };
 use testserver::mock;
 
@@ -184,9 +184,7 @@ fn interceptor_keeps_distinct_scopes_and_host_only() {
             "set-cookie": "n=nested; Domain=127.0.0.1; Path=/appointment",
         }
     };
-    client
-        .get(format!("{}appointment", nested.url()))
-        .unwrap();
+    client.get(format!("{}appointment", nested.url())).unwrap();
 
     let snapshot = jar.snapshot();
     let host = snapshot
@@ -226,12 +224,7 @@ fn interceptor_redirect_keeps_accepted_cookie() {
         }
     };
 
-    Request::get(start.url())
-        .redirect_policy(RedirectPolicy::Follow)
-        .body(())
-        .unwrap()
-        .send()
-        .unwrap();
+    client.get(start.url()).unwrap();
 
     hop.request()
         .expect_header_matches("cookie", |value| value.contains("hop=1"));

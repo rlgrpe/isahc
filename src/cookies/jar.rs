@@ -1,5 +1,6 @@
-use super::{cookie::SameSite, Cookie};
+use super::{Cookie, cookie::SameSite};
 use http::Uri;
+use indexmap::IndexSet;
 use std::{
     error::Error,
     fmt,
@@ -8,7 +9,6 @@ use std::{
     sync::{Arc, RwLock},
     time::SystemTime,
 };
-use indexmap::IndexSet;
 
 /// Returned when a [`Cookie`] fails to be added to the [`CookieJar`].
 #[derive(Clone, Debug)]
@@ -78,18 +78,44 @@ pub struct CookieJar {
 
 /// One unexpired cookie as stored by the jar, with effective scope.
 ///
-/// Cookie values are secret-bearing; this type does not implement `Debug`.
+/// Cookie values are secret-bearing; `Debug` redacts `value`.
 #[derive(Clone, PartialEq, Eq)]
 pub struct EffectiveCookieSnapshot {
+    /// Cookie name.
     pub name: String,
+    /// Cookie value. Secret-bearing; omitted from `Debug`.
     pub value: String,
+    /// Effective domain after jar acceptance, not the raw Domain attribute.
     pub effective_domain: String,
+    /// Effective path after jar acceptance, not the raw Path attribute.
     pub effective_path: String,
+    /// True when the cookie is host-only (no Domain attribute).
     pub host_only: bool,
+    /// Secure flag.
     pub secure: bool,
+    /// HttpOnly flag.
     pub http_only: bool,
+    /// Explicit SameSite, or `None` if the attribute was omitted.
     pub same_site: Option<SameSite>,
+    /// Absolute expiry, or `None` for a session cookie.
     pub expiration: Option<SystemTime>,
+}
+
+impl fmt::Debug for EffectiveCookieSnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EffectiveCookieSnapshot")
+            .field("name", &self.name)
+            .field("value", &"<redacted>")
+            .field("effective_domain", &self.effective_domain)
+            .field("effective_path", &self.effective_path)
+            .field("host_only", &self.host_only)
+            .field("secure", &self.secure)
+            .field("http_only", &self.http_only)
+            .field("same_site", &self.same_site)
+            .field("expiration", &self.expiration)
+            .finish()
+    }
 }
 
 impl CookieJar {
@@ -118,17 +144,10 @@ impl CookieJar {
     /// inserted or removed) will not be reflected in the collection.
     pub fn get_for_uri(&self, uri: &Uri) -> impl IntoIterator<Item = Cookie> {
         let jar = self.cookies.read().unwrap();
-
-        let mut cookies = jar
-            .iter()
+        jar.iter()
             .filter(|cookie| cookie.matches(uri))
             .map(|c| c.cookie.clone())
-            .collect::<Vec<_>>();
-
-        // Cookies should be returned in lexical order.
-        // cookies.sort_by(/**/|a, b| a.name().cmp(b.name()));
-
-        cookies
+            .collect::<Vec<_>>()
     }
 
     /// Remove all cookies from this cookie jar.
@@ -141,7 +160,7 @@ impl CookieJar {
     /// Records use the effective domain and path resolved when the cookie was
     /// accepted, not the original optional Domain/Path attributes. Expired
     /// cookies are omitted using one captured time and native expiry semantics.
-    /// This type is not `Debug` so cookie values are not printed by accident.
+    /// Snapshot `Debug` redacts cookie values.
     pub fn snapshot(&self) -> Vec<EffectiveCookieSnapshot> {
         let now = SystemTime::now();
         let jar = self.cookies.read().unwrap();
@@ -389,24 +408,27 @@ mod tests {
     fn cookie_domain_not_allowed() {
         let jar = CookieJar::default();
 
-        assert!(jar
-            .set(
+        assert!(
+            jar.set(
                 Cookie::parse("foo=bar").unwrap(),
                 &"https://bar.baz.com".parse().unwrap()
             )
-            .is_ok());
-        assert!(jar
-            .set(
+            .is_ok()
+        );
+        assert!(
+            jar.set(
                 Cookie::parse("foo=bar; domain=bar.baz.com").unwrap(),
                 &"https://bar.baz.com".parse().unwrap()
             )
-            .is_ok());
-        assert!(jar
-            .set(
+            .is_ok()
+        );
+        assert!(
+            jar.set(
                 Cookie::parse("foo=bar; domain=baz.com").unwrap(),
                 &"https://bar.baz.com".parse().unwrap()
             )
-            .is_ok());
+            .is_ok()
+        );
 
         assert!(
             jar.set(
