@@ -32,6 +32,6 @@ mod jar;
 mod psl;
 
 pub use self::{
-    cookie::{Cookie, CookieBuilder, ParseError},
-    jar::{CookieJar, CookieRejectedError, CookieRejectedErrorKind},
+    cookie::{Cookie, CookieBuilder, ParseError, SameSite},
+    jar::{CookieJar, CookieRejectedError, CookieRejectedErrorKind, EffectiveCookieSnapshot},
 };

@@ -1,4 +1,4 @@
-use super::Cookie;
+use super::{cookie::SameSite, Cookie};
 use http::Uri;
 use std::{
     error::Error,
@@ -6,6 +6,7 @@ use std::{
     hash::{Hash, Hasher},
     net::{Ipv4Addr, Ipv6Addr},
     sync::{Arc, RwLock},
+    time::SystemTime,
 };
 use indexmap::IndexSet;
 
@@ -75,6 +76,22 @@ pub struct CookieJar {
     cookies: Arc<RwLock<IndexSet<CookieWithContext>>>,
 }
 
+/// One unexpired cookie as stored by the jar, with effective scope.
+///
+/// Cookie values are secret-bearing; this type does not implement `Debug`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct EffectiveCookieSnapshot {
+    pub name: String,
+    pub value: String,
+    pub effective_domain: String,
+    pub effective_path: String,
+    pub host_only: bool,
+    pub secure: bool,
+    pub http_only: bool,
+    pub same_site: Option<SameSite>,
+    pub expiration: Option<SystemTime>,
+}
+
 impl CookieJar {
     /// Create a new, empty cookie jar.
     pub fn new() -> Self {
@@ -117,6 +134,31 @@ impl CookieJar {
     /// Remove all cookies from this cookie jar.
     pub fn clear(&self) {
         self.cookies.write().unwrap().clear();
+    }
+
+    /// Copy every unexpired cookie under one read lock.
+    ///
+    /// Records use the effective domain and path resolved when the cookie was
+    /// accepted, not the original optional Domain/Path attributes. Expired
+    /// cookies are omitted using one captured time and native expiry semantics.
+    /// This type is not `Debug` so cookie values are not printed by accident.
+    pub fn snapshot(&self) -> Vec<EffectiveCookieSnapshot> {
+        let now = SystemTime::now();
+        let jar = self.cookies.read().unwrap();
+        jar.iter()
+            .filter(|cookie| !cookie.cookie.is_expired_at(now))
+            .map(|cookie| EffectiveCookieSnapshot {
+                name: cookie.cookie.name().to_owned(),
+                value: cookie.cookie.value().to_owned(),
+                effective_domain: cookie.domain_value.clone(),
+                effective_path: cookie.path_value.clone(),
+                host_only: cookie.is_host_only(),
+                secure: cookie.cookie.is_secure(),
+                http_only: cookie.cookie.http_only(),
+                same_site: cookie.cookie.same_site(),
+                expiration: cookie.cookie.expiration(),
+            })
+            .collect()
     }
 
     /// Set a cookie for the given absolute request URI.
