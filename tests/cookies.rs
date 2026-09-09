@@ -7,7 +7,6 @@ use isahc::{
     cookies::{Cookie, CookieJar, SameSite},
     prelude::*,
 };
-use std::collections::HashSet;
 use testserver::mock;
 
 #[test]
@@ -39,8 +38,11 @@ fn cookie_lifecycle() {
         .get_header("cookie")
         .next()
         .expect("outgoing cookie header");
-    let tokens: HashSet<&str> = header.split("; ").collect();
-    assert_eq!(tokens, HashSet::from(["foo=bar", "baz=123"]));
+    let mut tokens: Vec<&str> = header.split("; ").collect();
+    tokens.sort_unstable();
+    let mut expected = vec!["baz=123", "foo=bar"];
+    expected.sort_unstable();
+    assert_eq!(tokens, expected);
 }
 
 #[test]

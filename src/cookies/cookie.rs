@@ -1,6 +1,7 @@
 use std::{
     error::Error,
-    fmt, str,
+    fmt,
+    str,
     time::{Duration, SystemTime},
 };
 
@@ -357,15 +358,8 @@ impl Cookie {
 
         // Unknown attributes are ignored (RFC 6265 section 4.1.2).
         for attribute in attributes {
-            let attribute = trim_ascii(attribute);
             if let Some((name, value)) = split_at_first(attribute, &b'=') {
-                let name = trim_ascii(name);
-                let value = trim_ascii(value);
-                if name.eq_ignore_ascii_case(b"HttpOnly") {
-                    cookie_http_only = true;
-                } else if name.eq_ignore_ascii_case(b"Secure") {
-                    cookie_secure = true;
-                } else if name.eq_ignore_ascii_case(b"Expires") {
+                if name.eq_ignore_ascii_case(b"Expires") {
                     if cookie_expiration.is_none() {
                         if let Ok(value) = str::from_utf8(value) {
                             if let Ok(time) = httpdate::parse_http_date(value) {
@@ -388,14 +382,16 @@ impl Cookie {
                     if let Ok(value) = str::from_utf8(value) {
                         cookie_path = Some(value.to_owned());
                     }
-                } else if name.eq_ignore_ascii_case(b"SameSite") {
+                } else if trim_dispatch(name).eq_ignore_ascii_case(b"SameSite") {
                     if let Ok(value) = str::from_utf8(value) {
                         cookie_same_site = parse_same_site(value);
                     }
+                } else if trim_dispatch(name).eq_ignore_ascii_case(b"HttpOnly") {
+                    cookie_http_only = true;
                 }
             } else if attribute.eq_ignore_ascii_case(b"Secure") {
                 cookie_secure = true;
-            } else if attribute.eq_ignore_ascii_case(b"HttpOnly") {
+            } else if trim_dispatch(attribute).eq_ignore_ascii_case(b"HttpOnly") {
                 cookie_http_only = true;
             }
         }
@@ -508,6 +504,18 @@ fn trim_ascii(ascii: &[u8]) -> &[u8] {
         end -= 1;
     }
     &ascii[..end]
+}
+
+fn trim_dispatch(ascii: &[u8]) -> &[u8] {
+    let mut ascii = trim_ascii(ascii);
+    while ascii.first() == Some(&b'\t') {
+        ascii = &ascii[1..];
+    }
+    let mut end = ascii.len();
+    while end > 0 && ascii[end - 1] == b'\t' {
+        end -= 1;
+    }
+    trim_ascii(&ascii[..end])
 }
 
 fn split_at_first<'a, T: PartialEq>(slice: &'a [T], separator: &T) -> Option<(&'a [T], &'a [T])> {
