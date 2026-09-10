@@ -17,6 +17,17 @@ impl fmt::Display for ParseError {
 
 impl Error for ParseError {}
 
+/// Cookie SameSite attribute. Distinct from an omitted attribute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SameSite {
+    /// `SameSite=Strict`
+    Strict,
+    /// `SameSite=Lax`
+    Lax,
+    /// Explicit `SameSite=None`, not an unspecified attribute.
+    None,
+}
+
 /// Builder for a [`Cookie`].
 ///
 /// ```rust
@@ -49,6 +60,12 @@ pub struct CookieBuilder {
     /// True if the cookie is marked as secure (limited in scope to HTTPS).
     secure: Option<bool>,
 
+    /// True if the cookie is marked HttpOnly.
+    http_only: Option<bool>,
+
+    /// Explicit SameSite attribute, if present.
+    same_site: Option<SameSite>,
+
     /// Time when this cookie expires. If not present, then this is a session
     /// cookie that expires when the current client session ends.
     expiration: Option<SystemTime>,
@@ -68,6 +85,8 @@ impl CookieBuilder {
             domain: None,
             path: None,
             secure: None,
+            http_only: None,
+            same_site: None,
             expiration: None,
         }
     }
@@ -96,6 +115,19 @@ impl CookieBuilder {
         self
     }
 
+    /// True if the cookie is marked HttpOnly.
+    pub fn http_only(mut self, http_only: bool) -> Self {
+        self.http_only = Some(http_only);
+        self
+    }
+
+    /// Sets the SameSite attribute. Omitted by default, which is distinct from
+    /// [`SameSite::None`].
+    pub fn same_site(mut self, same_site: SameSite) -> Self {
+        self.same_site = Some(same_site);
+        self
+    }
+
     /// Time when this cookie expires. If not present, then this is a session
     /// cookie that expires when the current client session ends.
     pub fn expiration<T>(mut self, expiration: T) -> Self
@@ -118,6 +150,8 @@ impl CookieBuilder {
             domain,
             path,
             secure,
+            http_only,
+            same_site,
             expiration,
         } = self;
 
@@ -125,9 +159,13 @@ impl CookieBuilder {
         cookie.domain = domain;
         cookie.path = path;
         cookie.expiration = expiration;
+        cookie.same_site = same_site;
 
         if let Some(secure) = secure {
             cookie.secure = secure;
+        }
+        if let Some(http_only) = http_only {
+            cookie.http_only = http_only;
         }
 
         Ok(cookie)
@@ -166,6 +204,12 @@ pub struct Cookie {
     /// True if the cookie is marked as secure (limited in scope to HTTPS).
     secure: bool,
 
+    /// True if the cookie is marked HttpOnly.
+    http_only: bool,
+
+    /// Explicit SameSite attribute, if present.
+    same_site: Option<SameSite>,
+
     /// Time when this cookie expires. If not present, then this is a session
     /// cookie that expires when the current client session ends.
     expiration: Option<SystemTime>,
@@ -194,6 +238,8 @@ impl Cookie {
                 domain: None,
                 path: None,
                 secure: false,
+                http_only: false,
+                same_site: None,
                 expiration: None,
             })
         } else {
@@ -259,6 +305,21 @@ impl Cookie {
         self.secure
     }
 
+    #[inline]
+    pub(crate) fn http_only(&self) -> bool {
+        self.http_only
+    }
+
+    #[inline]
+    pub(crate) fn same_site(&self) -> Option<SameSite> {
+        self.same_site
+    }
+
+    #[inline]
+    pub(crate) fn expiration(&self) -> Option<SystemTime> {
+        self.expiration
+    }
+
     /// Get whether this cookie should be persisted across sessions.
     #[inline]
     #[allow(unused)]
@@ -268,10 +329,13 @@ impl Cookie {
 
     /// Check if the cookie has expired.
     pub(crate) fn is_expired(&self) -> bool {
-        if let Some(time) = self.expiration.as_ref() {
-            *time < SystemTime::now()
-        } else {
-            false
+        self.is_expired_at(SystemTime::now())
+    }
+
+    pub(crate) fn is_expired_at(&self, now: SystemTime) -> bool {
+        match self.expiration {
+            Some(time) => time < now,
+            None => false,
         }
     }
 
@@ -288,11 +352,11 @@ impl Cookie {
         let mut cookie_domain = None;
         let mut cookie_path = None;
         let mut cookie_secure = false;
+        let mut cookie_http_only = false;
+        let mut cookie_same_site = None;
         let mut cookie_expiration = None;
 
-        // Look for known attribute names and parse them. Note that there are
-        // multiple attributes in the spec that we don't parse right now because we
-        // do not care about them, including HttpOnly and SameSite.
+        // Unknown attributes are ignored (RFC 6265 section 4.1.2).
         for attribute in attributes {
             if let Some((name, value)) = split_at_first(attribute, &b'=') {
                 if name.eq_ignore_ascii_case(b"Expires") {
@@ -318,9 +382,17 @@ impl Cookie {
                     if let Ok(value) = str::from_utf8(value) {
                         cookie_path = Some(value.to_owned());
                     }
+                } else if trim_dispatch(name).eq_ignore_ascii_case(b"SameSite") {
+                    if let Ok(value) = str::from_utf8(value) {
+                        cookie_same_site = parse_same_site(value);
+                    }
+                } else if trim_dispatch(name).eq_ignore_ascii_case(b"HttpOnly") {
+                    cookie_http_only = true;
                 }
             } else if attribute.eq_ignore_ascii_case(b"Secure") {
                 cookie_secure = true;
+            } else if trim_dispatch(attribute).eq_ignore_ascii_case(b"HttpOnly") {
+                cookie_http_only = true;
             }
         }
 
@@ -328,6 +400,8 @@ impl Cookie {
             name: cookie_name,
             value: cookie_value,
             secure: cookie_secure,
+            http_only: cookie_http_only,
+            same_site: cookie_same_site,
             expiration: cookie_expiration,
             domain: cookie_domain,
             path: cookie_path,
@@ -344,6 +418,19 @@ impl PartialEq<&str> for Cookie {
 impl PartialEq<String> for Cookie {
     fn eq(&self, other: &String) -> bool {
         self.value == *other
+    }
+}
+
+fn parse_same_site(value: &str) -> Option<SameSite> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("Strict") {
+        Some(SameSite::Strict)
+    } else if value.eq_ignore_ascii_case("Lax") {
+        Some(SameSite::Lax)
+    } else if value.eq_ignore_ascii_case("None") {
+        Some(SameSite::None)
+    } else {
+        None
     }
 }
 
@@ -407,7 +494,20 @@ fn trim_left_ascii(mut ascii: &[u8]) -> &[u8] {
     while ascii.first() == Some(&b' ') {
         ascii = &ascii[1..];
     }
+    ascii
+}
 
+fn is_ows(byte: u8) -> bool {
+    byte == b' ' || byte == b'\t'
+}
+
+fn trim_dispatch(mut ascii: &[u8]) -> &[u8] {
+    while !ascii.is_empty() && is_ows(ascii[0]) {
+        ascii = &ascii[1..];
+    }
+    while !ascii.is_empty() && is_ows(ascii[ascii.len() - 1]) {
+        ascii = &ascii[..ascii.len() - 1];
+    }
     ascii
 }
 
@@ -450,6 +550,8 @@ mod tests {
         assert_eq!(cookie.value(), "bar");
         assert_eq!(cookie.path(), None);
         assert!(!cookie.is_secure());
+        assert!(!cookie.http_only());
+        assert_eq!(cookie.same_site(), None);
         assert!(!cookie.is_persistent());
     }
 
@@ -522,5 +624,42 @@ mod tests {
         assert_eq!(cookie.domain.as_deref(), Some("baz.com"));
         assert!(cookie.is_secure());
         assert_eq!(cookie.expiration, Some(exp));
+    }
+
+    #[test]
+    fn parse_httponly_and_samesite() {
+        let cookie = Cookie::parse("foo=bar; HttpOnly; SameSite=Lax").unwrap();
+        assert!(cookie.http_only());
+        assert_eq!(cookie.same_site(), Some(SameSite::Lax));
+
+        let none = Cookie::parse("foo=bar; SameSite=None").unwrap();
+        assert!(!none.http_only());
+        assert_eq!(none.same_site(), Some(SameSite::None));
+
+        let omitted = Cookie::parse("foo=bar").unwrap();
+        assert_eq!(omitted.same_site(), None);
+        assert_ne!(omitted.same_site(), Some(SameSite::None));
+
+        let assigned = Cookie::parse("foo=bar; HttpOnly=; SameSite = Strict").unwrap();
+        assert!(assigned.http_only());
+        assert_eq!(assigned.same_site(), Some(SameSite::Strict));
+
+        let spaced = Cookie::parse("foo=bar; HttpOnly ; SameSite = Lax").unwrap();
+        assert!(spaced.http_only());
+        assert_eq!(spaced.same_site(), Some(SameSite::Lax));
+
+        let alternating = Cookie::parse("foo=bar; HttpOnly\t \t; SameSite\t \t=Strict").unwrap();
+        assert!(alternating.http_only());
+        assert_eq!(alternating.same_site(), Some(SameSite::Strict));
+    }
+    #[test]
+    fn builder_sets_httponly_and_samesite() {
+        let cookie = Cookie::builder("foo", "bar")
+            .http_only(true)
+            .same_site(SameSite::Strict)
+            .build()
+            .unwrap();
+        assert!(cookie.http_only());
+        assert_eq!(cookie.same_site(), Some(SameSite::Strict));
     }
 }
