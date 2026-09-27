@@ -7,6 +7,7 @@ use isahc::{
     cookies::{Cookie, CookieJar, SameSite},
     prelude::*,
 };
+use test_case::test_case;
 use testserver::mock;
 
 #[test]
@@ -144,8 +145,10 @@ fn interceptor_replacement_owns_current_flags() {
     assert_ne!(three.same_site, None);
 }
 
-#[test]
-fn interceptor_max_age_zero_deletes() {
+#[test_case("Expires=Wed, 21 Oct 2099 07:28:00 GMT; Max-Age=0"; "zero")]
+#[test_case("Max-Age=-1; Expires=Wed, 21 Oct 2099 07:28:00 GMT"; "negative before expires")]
+#[test_case("Expires=Wed, 21 Oct 2099 07:28:00 GMT; Max-Age=-1"; "negative after expires")]
+fn interceptor_max_age_deletes(attributes: &str) {
     let jar = CookieJar::new();
     let client = HttpClient::builder()
         .cookie_jar(jar.clone())
@@ -155,22 +158,45 @@ fn interceptor_max_age_zero_deletes() {
     let set = mock! {
         headers {
             "set-cookie": "gone=1; Path=/",
+            "set-cookie": "gone=keep; Path=/other",
         }
     };
     client.get(set.url()).unwrap();
-    assert!(jar.snapshot().iter().any(|cookie| cookie.name == "gone"));
+    assert!(jar.snapshot().iter().any(|cookie| cookie.name == "gone"
+        && cookie.effective_path == "/"
+        && cookie.value == "1"));
 
+    let header = format!("gone=; {}; Path=/", attributes);
     let delete = mock! {
         headers {
-            "set-cookie": "gone=; Max-Age=0; Path=/",
+            "set-cookie": header,
         }
     };
     client.get(delete.url()).unwrap();
-    assert!(jar.snapshot().iter().all(|cookie| cookie.name != "gone"));
+    let snapshot = jar.snapshot();
+    assert!(
+        snapshot
+            .iter()
+            .all(|cookie| cookie.name != "gone" || cookie.effective_path != "/")
+    );
+    let sibling = snapshot
+        .iter()
+        .find(|cookie| cookie.name == "gone" && cookie.effective_path == "/other")
+        .expect("same-name cookie at another path remains");
+    assert_eq!(sibling.value, "keep");
+    assert!(sibling.host_only);
 
     let follow = mock!();
     client.get(follow.url()).unwrap();
     assert!(follow.request().get_header("cookie").next().is_none());
+
+    let follow_sibling = mock!();
+    client
+        .get(format!("{}other", follow_sibling.url()))
+        .unwrap();
+    follow_sibling
+        .request()
+        .expect_header("cookie", "gone=keep");
 }
 
 #[test]

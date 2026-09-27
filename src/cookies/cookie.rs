@@ -267,6 +267,9 @@ impl Cookie {
     /// Note that unknown attributes do not cause a parsing error, and are
     /// simply ignored (as per [RFC 6265, section
     /// 4.1.2](https://tools.ietf.org/html/rfc6265#section-4.1.2)).
+    ///
+    /// A valid `Max-Age` takes precedence over `Expires`. Zero or negative
+    /// values expire the cookie immediately; malformed values are ignored.
     pub(crate) fn parse<T>(header: T) -> Result<Self, ParseError>
     where
         T: AsRef<[u8]>,
@@ -372,10 +375,18 @@ impl Cookie {
                         cookie_domain = Some(value.trim_start_matches('.').to_lowercase());
                     }
                 } else if name.eq_ignore_ascii_case(b"Max-Age") {
-                    if let Ok(value) = str::from_utf8(value) {
+                    if value.starts_with(b"-")
+                        && value.len() > 1
+                        && value[1..].iter().all(u8::is_ascii_digit)
+                    {
+                        cookie_expiration = Some(SystemTime::UNIX_EPOCH);
+                    } else if let Ok(value) = str::from_utf8(value) {
                         if let Ok(seconds) = value.parse() {
-                            cookie_expiration =
-                                Some(SystemTime::now() + Duration::from_secs(seconds));
+                            cookie_expiration = Some(if seconds == 0 {
+                                SystemTime::UNIX_EPOCH
+                            } else {
+                                SystemTime::now() + Duration::from_secs(seconds)
+                            });
                         }
                     }
                 } else if name.eq_ignore_ascii_case(b"Path") {
@@ -585,24 +596,49 @@ mod tests {
         );
     }
 
-    #[test]
-    fn parse_set_cookie_header_max_age() {
-        let cookie =
-            Cookie::parse("foo=bar; path=/sub;Secure; DOMAIN=baz.com; max-age=60").unwrap();
+    #[test_case("max-age=60"; "positive")]
+    #[test_case("max-age=60; Expires=Wed, 21 Oct 2015 07:28:00 GMT"; "before expires")]
+    #[test_case("Expires=Wed, 21 Oct 2015 07:28:00 GMT; max-age=60"; "after expires")]
+    fn parse_set_cookie_header_max_age(attributes: &str) {
+        let before = SystemTime::now();
+        let cookie = Cookie::parse(format!(
+            "foo=bar; path=/sub;Secure; DOMAIN=baz.com; {}",
+            attributes
+        ))
+        .unwrap();
+        let after = SystemTime::now();
 
         assert_eq!(cookie.name(), "foo");
         assert_eq!(cookie.value(), "bar");
         assert_eq!(cookie.path(), Some("/sub"));
         assert_eq!(cookie.domain.as_deref(), Some("baz.com"));
         assert!(cookie.is_secure());
-        assert!(!cookie.is_expired());
-        assert!(
-            cookie
-                .expiration
-                .unwrap()
-                .duration_since(SystemTime::now())
-                .unwrap()
-                <= Duration::from_secs(60)
+        let expiration = cookie.expiration.unwrap();
+        assert!(expiration >= before + Duration::from_secs(60));
+        assert!(expiration <= after + Duration::from_secs(60));
+    }
+
+    #[test_case("0"; "zero")]
+    #[test_case("-1"; "negative")]
+    #[test_case("-0"; "negative zero")]
+    #[test_case("-18446744073709551616"; "negative beyond u64 range")]
+    fn parse_set_cookie_header_max_age_immediate_expiration(value: &str) {
+        let before = SystemTime::now();
+        let cookie = Cookie::parse(format!("foo=bar; Max-Age={}", value)).unwrap();
+
+        assert!(cookie.is_expired_at(before));
+    }
+
+    #[test_case("Max-Age=invalid", None; "invalid without expires")]
+    #[test_case("Max-Age=-; Expires=Wed, 21 Oct 2015 07:28:00 GMT", Some(1_445_412_480); "bare minus")]
+    #[test_case("Max-Age=-1x; Expires=Wed, 21 Oct 2015 07:28:00 GMT", Some(1_445_412_480); "negative nondigit")]
+    #[test_case("Expires=Wed, 21 Oct 2015 07:28:00 GMT; Max-Age=invalid", Some(1_445_412_480); "invalid after expires")]
+    fn parse_set_cookie_header_invalid_max_age(attributes: &str, expiration: Option<u64>) {
+        let cookie = Cookie::parse(format!("foo=bar; {}", attributes)).unwrap();
+
+        assert_eq!(
+            cookie.expiration.as_ref().map(system_time_timestamp),
+            expiration
         );
     }
 
