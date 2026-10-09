@@ -262,6 +262,7 @@ fn poller_modify(
 fn is_bad_socket_error(error: &io::Error) -> bool {
     // OS-specific error codes that aren't mapped to an `std::io::ErrorKind`.
     const EBADF: i32 = 9;
+    const EPERM: i32 = 1;
     const ERROR_INVALID_HANDLE: i32 = 6;
     const ERROR_NOT_FOUND: i32 = 1168;
 
@@ -274,6 +275,14 @@ fn is_bad_socket_error(error: &io::Error) -> bool {
             // kqueue likes to return EBADF, especially on removal, since it
             // automatically removes sockets when they are closed.
             Some(EBADF) if cfg!(unix) => true,
+
+            // epoll returns EPERM when the descriptor is not pollable at all,
+            // i.e. it is a regular file or a directory. This happens when curl
+            // reports a socket it has already closed and another thread has
+            // since reused the same descriptor number for a file. Like EBADF,
+            // the registration is deferred until curl removes the socket or
+            // the number refers to a socket again.
+            Some(EPERM) if cfg!(unix) => true,
 
             // IOCP can return these in rare circumstances. Typically these just
             // indicate that the socket is no longer registered with the
@@ -311,5 +320,33 @@ impl Hasher for IntHasher {
     #[inline]
     fn finish(&self) -> u64 {
         u64::from_ne_bytes(self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eperm_is_a_bad_socket_error() {
+        assert!(is_bad_socket_error(&io::Error::from_raw_os_error(1)));
+    }
+
+    /// epoll rejects regular files with EPERM. The selector must defer such a
+    /// descriptor the way it defers a closed one instead of surfacing an error
+    /// that the agent thread unwraps.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn registering_a_regular_file_is_deferred() {
+        use std::os::unix::io::AsRawFd;
+
+        let file = tempfile::tempfile().unwrap();
+        let mut selector = Selector::new().unwrap();
+
+        selector.register(file.as_raw_fd(), true, false).unwrap();
+        assert!(selector.bad_sockets.contains(&file.as_raw_fd()));
+
+        selector.deregister(file.as_raw_fd()).unwrap();
+        assert!(!selector.bad_sockets.contains(&file.as_raw_fd()));
     }
 }
