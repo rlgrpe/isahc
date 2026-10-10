@@ -67,6 +67,12 @@ impl Selector {
         })
     }
 
+    /// Number of sockets curl has asked us to watch.
+    #[cfg(test)]
+    pub(crate) fn registered_count(&self) -> usize {
+        self.sockets.len()
+    }
+
     /// Register a socket with the selector to begin receiving readiness events
     /// for it.
     ///
@@ -150,13 +156,23 @@ impl Selector {
                 // If the socket was already re-registered this tick, then we
                 // don't need to do this.
                 if registration.tick != self.tick {
-                    poller_modify(
+                    match poller_modify(
                         &self.poller,
                         socket,
                         registration.readable,
                         registration.writable,
-                    )?;
-                    registration.tick = self.tick;
+                    ) {
+                        Ok(()) => registration.tick = self.tick,
+                        // Curl closed the socket after the event fired but
+                        // has not asked us to stop polling it yet. Defer it
+                        // the same way `register` does instead of ending the
+                        // agent over a descriptor that is about to be removed.
+                        Err(e) if is_bad_socket_error(&e) => {
+                            tracing::debug!(socket, error = ?e, "bad socket on re-registration, will try again later");
+                            self.bad_sockets.insert(socket);
+                        }
+                        Err(e) => return Err(e),
+                    }
                 }
             }
         }

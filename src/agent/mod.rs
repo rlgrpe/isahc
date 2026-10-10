@@ -172,6 +172,16 @@ pub(crate) struct Handle {
 /// traditional curl multi event loop with some extra bookkeeping and async
 /// features like wakers.
 struct AgentContext {
+    /// Contains all of the active requests.
+    ///
+    /// Declared before `multi` on purpose: fields drop in declaration order,
+    /// and detaching an easy handle makes curl call the socket and timer
+    /// callbacks stored inside `multi`. If `multi` dropped first, an early
+    /// exit from `run` (an error or a panic) would invoke those callbacks on
+    /// freed memory and crash the whole process with SIGSEGV instead of
+    /// failing this one agent.
+    requests: Slab<curl::multi::Easy2Handle<RequestHandler>>,
+
     /// A curl multi handle, of course.
     multi: curl::multi::Multi,
 
@@ -180,9 +190,6 @@ struct AgentContext {
 
     /// Incoming messages from the agent handle.
     message_rx: Receiver<Message>,
-
-    /// Contains all of the active requests.
-    requests: Slab<curl::multi::Easy2Handle<RequestHandler>>,
 
     /// Indicates if the thread has been requested to stop.
     close_requested: bool,
@@ -234,7 +241,10 @@ impl Handle {
 
     /// Send a message to the agent thread.
     ///
-    /// If the agent is not connected, an error is returned.
+    /// If the agent thread is no longer running, an error is returned that
+    /// names how it ended. The caller sees an ordinary I/O error, so one dead
+    /// agent fails its own client's requests without panicking the thread
+    /// that submitted them.
     fn send_message(&self, message: Message) -> Result<(), Error> {
         match self.message_tx.try_send(message) {
             Ok(()) => {
@@ -242,11 +252,21 @@ impl Handle {
                 self.waker.wake_by_ref();
                 Ok(())
             }
-            Err(_) => match self.try_join() {
-                JoinResult::Err(e) => panic!("agent thread terminated with error: {:?}", e),
-                JoinResult::Panic => panic!("agent thread panicked"),
-                _ => panic!("agent thread terminated prematurely"),
-            },
+            Err(_) => {
+                let reason = match self.try_join() {
+                    JoinResult::Err(e) => format!("agent thread terminated with error: {}", e),
+                    JoinResult::Panic => "agent thread panicked".to_owned(),
+                    JoinResult::Ok | JoinResult::AlreadyJoined => {
+                        "agent thread terminated prematurely".to_owned()
+                    }
+                };
+
+                Err(Error::with_context(
+                    crate::error::ErrorKind::Io,
+                    Some(reason.clone()),
+                    io::Error::new(io::ErrorKind::BrokenPipe, reason),
+                ))
+            }
         }
     }
 
@@ -559,4 +579,88 @@ mod tests {
 
     static_assertions::assert_impl_all!(Handle: Send, Sync);
     static_assertions::assert_impl_all!(Message: Send);
+
+    /// A handle whose agent thread has already exited must report that as an
+    /// error to the caller rather than panic the thread submitting a request.
+    #[test]
+    fn submitting_to_a_finished_agent_is_an_error() {
+        let selector = Selector::new().unwrap();
+        let (message_tx, message_rx) = async_channel::bounded::<Message>(1);
+        // The agent thread has gone away: its receiver is dropped and the
+        // thread has returned.
+        drop(message_rx);
+        let handle = Handle {
+            message_tx,
+            waker: selector.waker(),
+            join_handle: Mutex::new(Some(thread::spawn(|| Ok(())))),
+        };
+
+        let error = handle.send_message(Message::Close).unwrap_err();
+
+        assert_eq!(error.kind(), &crate::error::ErrorKind::Io);
+        assert_eq!(
+            error.to_string(),
+            "unknown error: agent thread terminated prematurely"
+        );
+    }
+
+    /// An agent context that goes away with a request still attached must
+    /// detach that request while the multi handle's callbacks are alive.
+    /// With `multi` dropping before `requests`, curl invoked the socket
+    /// callback on freed memory during `curl_multi_remove_handle`.
+    #[test]
+    fn dropping_context_with_live_request_detaches_it_safely() {
+        use std::{
+            net::{TcpListener, TcpStream},
+            sync::mpsc,
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{}/", addr);
+        // Accept the connection and hold it open until the agent is gone, so
+        // curl cannot finish the transfer and remove the socket on its own.
+        let (accepted_tx, accepted_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let _ = accepted_tx.send(());
+            let _ = release_rx.recv();
+            drop(stream);
+        });
+
+        let (message_tx, message_rx) = async_channel::unbounded();
+        let mut agent = AgentContext::new(
+            Multi::new(),
+            Selector::new().unwrap(),
+            message_tx,
+            message_rx,
+        )
+        .unwrap();
+
+        let (handler, _response) = RequestHandler::new(crate::AsyncBody::empty());
+        let mut easy = EasyHandle::new(handler);
+        easy.url(&url).unwrap();
+        agent.begin_request(easy).unwrap();
+
+        // Drive curl until the connection is established. By then its socket
+        // is registered with the selector and nothing will remove it.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while accepted_rx.try_recv().is_err() && Instant::now() < deadline {
+            agent.poll().unwrap();
+        }
+        assert!(
+            agent.selector.registered_count() > 0,
+            "curl never registered a socket"
+        );
+
+        // The early-exit path: `run` leaves without `requests.clear()`.
+        drop(agent);
+
+        // If curl closed its socket before the handshake completed, the server
+        // is still blocked in `accept`; a throwaway connection unblocks it.
+        let _unblock = TcpStream::connect(addr);
+        release_tx.send(()).unwrap();
+        server.join().unwrap();
+    }
 }
