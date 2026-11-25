@@ -1079,6 +1079,23 @@ impl HttpClient {
         request_config.set_opt(&mut easy)?;
         self.inner.client_config.set_opt(&mut easy)?;
 
+        // Only handles that verify the peer against the default bundle share the
+        // store. A custom CA file keeps curl's own lookup; with verification off
+        // curl loads nothing anyway.
+        #[cfg(all(feature = "shared-ca-store", unix))]
+        {
+            let verifies_peer = !request_config.ssl_options.map_or(false, |options| {
+                options.contains(crate::config::SslOption::DANGER_ACCEPT_INVALID_CERTS)
+            });
+            if verifies_peer
+                && request_config.ssl_ca_certificate.is_none()
+                && crate::shared_ca::is_available()
+            {
+                crate::shared_ca::detach_curl_ca_lookup(easy.raw())?;
+                easy.get_mut().attach_shared_ca_store = true;
+            }
+        }
+
         // Check if we need to disable the Expect header.
         let disable_expect_header = request_config.expect_continue
             .as_ref()

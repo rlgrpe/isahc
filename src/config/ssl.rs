@@ -368,7 +368,7 @@ impl SslOption {
     /// library).
     pub const DANGER_ACCEPT_REVOKED_CERTS: Self = SslOption(0b0100);
 
-    const fn contains(self, other: Self) -> bool {
+    pub(crate) const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
 }
