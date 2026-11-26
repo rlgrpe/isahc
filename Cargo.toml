@@ -30,6 +30,7 @@ static-curl = ["curl/static-curl"]
 static-ssl = ["curl/static-ssl"]
 text-decoding = ["encoding_rs", "mime"]
 unstable-interceptors = []
+shared-ca-store = ["static-curl", "static-ssl", "openssl-sys", "openssl-probe"]
 
 [dependencies]
 indexmap = "2.9.0"
@@ -78,6 +79,14 @@ optional = true
 version = "1.0"
 optional = true
 
+[dependencies.openssl-sys]
+version = "0.9.64"
+optional = true
+
+[dependencies.openssl-probe]
+version = "0.1.2"
+optional = true
+
 [dependencies.tracing]
 version = "0.1.17"
 features = ["log"]
@@ -98,6 +107,7 @@ tempfile = "3.1"
 test-case = "2.0"
 tracing-subscriber = ">=0.2.12, <0.4.0"
 serde_json = "1"
+openssl = { version = "0.10", features = ["vendored"] }
 
 [dev-dependencies.testserver]
 path = "testserver"

@@ -100,6 +100,10 @@ pub(crate) struct RequestHandler {
 
     /// If true, do not warn about prematurely closed responses.
     pub(crate) disable_connection_reuse_log: bool,
+
+    /// Verify the server against the process-wide CA store.
+    #[cfg(all(feature = "shared-ca-store", unix))]
+    pub(crate) attach_shared_ca_store: bool,
 }
 
 // Would be send implicitly except for the raw CURL pointer.
@@ -143,6 +147,8 @@ impl RequestHandler {
             metrics: None,
             handle: ptr::null_mut(),
             disable_connection_reuse_log: false,
+            #[cfg(all(feature = "shared-ca-store", unix))]
+            attach_shared_ca_store: false,
         };
 
         // Create a future that resolves when the handler receives the response
@@ -628,6 +634,18 @@ impl curl::easy::Handler for RequestHandler {
         }
 
         true
+    }
+
+    /// Gets called by curl once the SSL context is set up, before the
+    /// handshake. Swaps in the process-wide CA store when this request uses it.
+    /// Also called for an HTTPS proxy's TLS context, so such a proxy is
+    /// verified against the shared store too.
+    #[cfg(all(feature = "shared-ca-store", unix))]
+    fn ssl_ctx(&mut self, cx: *mut std::ffi::c_void) -> Result<(), curl::Error> {
+        if self.attach_shared_ca_store {
+            crate::shared_ca::attach(cx);
+        }
+        Ok(())
     }
 
     /// Gets called by curl whenever it wishes to log a debug message.
