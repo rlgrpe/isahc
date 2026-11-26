@@ -191,8 +191,12 @@
 //!
 //! ## `shared-ca-store`
 //!
-//! Load the CA bundle once per process and share the parsed store between all
-//! TLS connections. Requires `static-ssl`.
+//! Load the CA bundle once per process and share the parsed store between the
+//! TLS connections that verify against the default bundle. Requests with a
+//! custom CA certificate or with certificate verification disabled keep
+//! curl's own lookup. The CA file is read once per process; the CA directory
+//! is searched lazily, so certificates added there later are still found.
+//! Enables `static-curl` and `static-ssl`.
 //!
 //! ## `text-decoding`
 //!

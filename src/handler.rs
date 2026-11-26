@@ -638,6 +638,8 @@ impl curl::easy::Handler for RequestHandler {
 
     /// Gets called by curl once the SSL context is set up, before the
     /// handshake. Swaps in the process-wide CA store when this request uses it.
+    /// Also called for an HTTPS proxy's TLS context, so such a proxy is
+    /// verified against the shared store too.
     #[cfg(all(feature = "shared-ca-store", unix))]
     fn ssl_ctx(&mut self, cx: *mut std::ffi::c_void) -> Result<(), curl::Error> {
         if self.attach_shared_ca_store {

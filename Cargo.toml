@@ -30,7 +30,7 @@ static-curl = ["curl/static-curl"]
 static-ssl = ["curl/static-ssl"]
 text-decoding = ["encoding_rs", "mime"]
 unstable-interceptors = []
-shared-ca-store = ["static-ssl", "openssl-sys", "openssl-probe"]
+shared-ca-store = ["static-curl", "static-ssl", "openssl-sys", "openssl-probe"]
 
 [dependencies]
 indexmap = "2.9.0"

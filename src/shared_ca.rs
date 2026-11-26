@@ -5,6 +5,16 @@
 //! the parsed store, so each new connection parses the whole bundle. Here the
 //! bundle is parsed once; handles that use it have both options cleared and
 //! get the store through the SSL context callback.
+//!
+//! The CA file (`SSL_CERT_FILE` or the probed default) is parsed once per
+//! process. The CA directory (`SSL_CERT_DIR` or the probed default) is
+//! registered as a lazy hashed-directory lookup, so certificates added there
+//! later are still found.
+//!
+//! curl calls the same SSL context callback for the TLS context of an HTTPS
+//! proxy, so a handle that uses the shared store also verifies an HTTPS proxy
+//! against it. The bundled curl has no default CA bundle of its own, so this
+//! widens what verifies rather than weakening it.
 #![allow(unsafe_code)]
 
 use once_cell::sync::Lazy;
